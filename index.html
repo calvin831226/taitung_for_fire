@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="台東縣建築火災隱患風險地圖儀表板：整合房屋稅籍屋齡與構造資料，計算各鄉鎮市綜合火災風險指數。">
+  <title>台東縣建築火災隱患風險地圖儀表板</title>
+
+  <!-- Bootstrap 5 -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <!-- 自訂樣式 -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ===== 1. 頂部導覽列 ===== -->
+  <nav class="navbar navbar-expand-lg navbar-dark app-navbar sticky-top">
+    <div class="container-fluid">
+      <a class="navbar-brand d-flex align-items-center gap-2" href="#">
+        <i class="bi bi-fire fs-4 text-warning"></i>
+        <span class="fw-bold brand-title">台東縣建築火災隱患風險地圖儀表板</span>
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMain"
+              aria-controls="navMain" aria-expanded="false" aria-label="切換導覽">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navMain">
+        <ul class="navbar-nav ms-auto align-items-lg-center gap-lg-2">
+          <li class="nav-item"><a class="nav-link" href="#mapSection"><i class="bi bi-map"></i> 風險地圖</a></li>
+          <li class="nav-item"><a class="nav-link" href="#dashSection"><i class="bi bi-bar-chart"></i> 數據儀表板</a></li>
+          <li class="nav-item"><a class="nav-link" href="#tableSection"><i class="bi bi-table"></i> 數據總表</a></li>
+          <li class="nav-item">
+            <button class="btn btn-sm btn-outline-light ms-lg-2 mt-2 mt-lg-0" data-bs-toggle="modal" data-bs-target="#methodModal">
+              <i class="bi bi-info-circle"></i> 研究方法
+            </button>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </nav>
+
+  <!-- 專題簡介 -->
+  <header class="intro-bar">
+    <div class="container-fluid py-3">
+      <div class="row g-3 align-items-center">
+        <div class="col-lg-7">
+          <p class="mb-0 intro-text">
+            本專題整合<strong>財政部房屋稅籍「住宅屋齡」</strong>與<strong>「住宅構造」</strong>開放資料，
+            依鄉鎮市區對應計算各區的<strong>綜合火災風險指數</strong>，
+            以老舊住宅比例與磚木石造等低耐火結構比例作為主要指標，協助辨識台東縣火災防治的優先關注區域。
+          </p>
+        </div>
+        <!-- 控制面板 -->
+        <div class="col-lg-5">
+          <div class="control-panel d-flex flex-wrap gap-3 align-items-end">
+            <div class="flex-grow-1">
+              <label for="periodSelect" class="form-label small mb-1"><i class="bi bi-calendar3"></i> 資料期別</label>
+              <select id="periodSelect" class="form-select form-select-sm"></select>
+            </div>
+            <div class="flex-grow-1">
+              <label for="classSelect" class="form-label small mb-1"><i class="bi bi-layers"></i> 分級方式</label>
+              <select id="classSelect" class="form-select form-select-sm">
+                <option value="quantile" selected>四分位數</option>
+                <option value="equal">等距分級</option>
+              </select>
+            </div>
+            <div class="flex-grow-1 weight-box">
+              <label for="weightRange" class="form-label small mb-1">
+                <i class="bi bi-sliders"></i> 權重 屋齡 <span id="wAgeLabel">50</span>% ／ 結構 <span id="wStructLabel">50</span>%
+              </label>
+              <input type="range" class="form-range" id="weightRange" min="0" max="100" step="5" value="50">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- 載入中 / 錯誤提示 -->
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="text-center">
+      <div class="spinner-border text-warning" role="status"></div>
+      <p class="mt-3 mb-0" id="loadingText">正在讀取 CSV 資料並計算風險指數…</p>
+    </div>
+  </div>
+  <div class="container-fluid"><div id="alertBox" class="mt-3"></div></div>
+
+  <!-- KPI 卡片 -->
+  <section class="container-fluid mt-3">
+    <div class="row g-3" id="kpiRow">
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon bg-primary-subtle text-primary"><i class="bi bi-houses"></i></div>
+          <div><div class="kpi-label">全縣住宅數</div><div class="kpi-value" id="kpiTotal">–</div></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon bg-warning-subtle text-warning-emphasis"><i class="bi bi-hourglass-split"></i></div>
+          <div><div class="kpi-label">全縣平均屋齡</div><div class="kpi-value" id="kpiAge">–</div></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon bg-secondary-subtle text-secondary-emphasis"><i class="bi bi-bricks"></i></div>
+          <div><div class="kpi-label">磚木石造比例</div><div class="kpi-value" id="kpiBrick">–</div></div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="kpi-card">
+          <div class="kpi-icon bg-danger-subtle text-danger"><i class="bi bi-exclamation-triangle"></i></div>
+          <div><div class="kpi-label">最高風險鄉鎮</div><div class="kpi-value" id="kpiTop">–</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== 2. 主視區：響應式雙欄 ===== -->
+  <main class="container-fluid my-3">
+    <div class="row g-3">
+
+      <!-- 左側：互動風險地圖 -->
+      <div class="col-12 col-lg-7" id="mapSection">
+        <div class="card panel-card h-100">
+          <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div class="d-flex align-items-center flex-wrap gap-2">
+              <span class="fw-semibold"><i class="bi bi-geo-alt-fill text-danger"></i> 互動風險地圖</span>
+              <span class="badge bg-danger-subtle text-danger border border-danger-subtle d-none d-sm-inline-flex align-items-center gap-1" id="drillHintBadge">
+                <i class="bi bi-cursor-fill"></i> 雙擊查看詳情
+              </span>
+            </div>
+            <span class="small text-muted" id="mapModeHint">單擊查看鄉鎮概況 ｜ 雙擊查看詳情</span>
+          </div>
+          <!-- 臺東市微觀指標建築快速導覽列 (微觀圖層開啟時顯示) -->
+          <div id="microLandmarkBar" class="micro-landmark-bar d-none">
+            <div class="d-flex align-items-center justify-content-between px-3 py-2 flex-wrap gap-2">
+              <div class="small fw-bold text-dark d-flex align-items-center gap-1">
+                <i class="bi bi-buildings-fill text-danger"></i> 臺東市指標建築：
+              </div>
+              <div class="d-flex flex-wrap gap-1" id="landmarkPillContainer"></div>
+            </div>
+          </div>
+          <div class="card-body p-0 position-relative">
+            <!-- 懸浮返回全縣概況按鈕 (下鑽後浮現) -->
+            <button type="button" id="btnBackToCounty" class="btn back-county-btn shadow-sm d-none" title="重置回全縣視野">
+              <i class="bi bi-arrow-left-circle-fill text-danger me-1"></i>
+              <span>返回全縣概況</span>
+            </button>
+            <div id="map"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右側：數據儀表板 -->
+      <div class="col-12 col-lg-5" id="dashSection">
+        <div class="card panel-card mb-3">
+          <div class="card-header">
+            <ul class="nav nav-pills nav-fill small flex-nowrap overflow-auto" role="tablist">
+              <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tabRisk" type="button">風險排名</button></li>
+              <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabStruct" type="button">結構分布</button></li>
+              <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabAge" type="button">屋齡分布</button></li>
+              <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabTrend" type="button">歷年趨勢</button></li>
+              <li class="nav-item"><button class="nav-link" id="tabMicroBtn" data-bs-toggle="pill" data-bs-target="#tabMicro" type="button"><i class="bi bi-buildings text-danger"></i> 微觀地標</button></li>
+            </ul>
+          </div>
+          <div class="card-body">
+            <div class="tab-content">
+              <div class="tab-pane fade show active" id="tabRisk">
+                <h6 class="chart-title">各鄉鎮綜合火災風險指數</h6>
+                <div class="chart-box chart-tall"><canvas id="riskChart"></canvas></div>
+              </div>
+              <div class="tab-pane fade" id="tabStruct">
+                <h6 class="chart-title">各鄉鎮住宅構造比例 (%)</h6>
+                <div class="chart-box chart-tall"><canvas id="structChart"></canvas></div>
+              </div>
+              <div class="tab-pane fade" id="tabAge">
+                <h6 class="chart-title">各鄉鎮住宅屋齡分布 (%)</h6>
+                <div class="chart-box chart-tall"><canvas id="ageChart"></canvas></div>
+              </div>
+              <div class="tab-pane fade" id="tabTrend">
+                <h6 class="chart-title">歷年平均屋齡與風險指數：<span class="selected-name">全縣</span></h6>
+                <div class="chart-box chart-tall"><canvas id="trendChart"></canvas></div>
+              </div>
+              <div class="tab-pane fade" id="tabMicro">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                  <h6 class="chart-title mb-0">臺東市微觀建築火災危險等級 (CSV)</h6>
+                  <span class="badge bg-danger-subtle text-danger" id="microBldCountBadge">指標建築數據</span>
+                </div>
+                <div class="chart-box" style="height: 240px;"><canvas id="microChart"></canvas></div>
+                <div class="mt-2 small text-muted">點擊圖條或地圖圖示，可同步查看細部消防指標與改善建議。</div>
+                <div class="mt-2" id="microLandmarksList"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 選取區域 / 微觀地標詳情 -->
+        <div class="card panel-card" id="detailCard">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span class="fw-semibold" id="detailCardTitle">
+              <i class="bi bi-pie-chart-fill text-primary"></i> <span class="selected-name">全縣</span> 結構組成
+            </span>
+            <div class="d-flex gap-1">
+              <button id="btnBackToTown" class="btn btn-sm btn-outline-primary d-none"><i class="bi bi-pie-chart"></i> 鄉鎮結構</button>
+              <button id="resetSel" class="btn btn-sm btn-outline-secondary d-none"><i class="bi bi-arrow-counterclockwise"></i> 全縣</button>
+            </div>
+          </div>
+          <div class="card-body">
+            <!-- 鄉鎮結構模式 -->
+            <div id="townDetailBlock">
+              <div class="row g-2 align-items-center">
+                <div class="col-7"><div class="chart-box chart-pie"><canvas id="pieChart"></canvas></div></div>
+                <div class="col-5" id="selSummary"></div>
+              </div>
+            </div>
+
+            <!-- 微觀地標專用聯動詳情模式 (CSV 資料動態驅動) -->
+            <div id="landmarkDetailBlock" class="d-none">
+              <div class="d-flex align-items-center justify-content-between mb-1">
+                <div>
+                  <h6 class="fw-bold mb-0 text-dark d-flex align-items-center gap-1" id="lmTitle">建築名稱</h6>
+                  <div class="text-muted small mt-1" id="lmAddress"><i class="bi bi-geo-alt"></i> 地址資訊</div>
+                </div>
+                <span class="risk-badge fs-6" id="lmRiskBadge">等級</span>
+              </div>
+              <div class="text-muted small mb-2 p-1 bg-light rounded" id="lmMeta">類型 ｜ 結構 ｜ 樓層 ｜ 屋齡</div>
+
+              <!-- 指標條目 -->
+              <div class="row g-2 mb-3">
+                <div class="col-6">
+                  <div class="p-2 bg-light rounded border h-100">
+                    <div class="text-muted small mb-1"><i class="bi bi-bell"></i> 住警器安裝狀態</div>
+                    <div class="d-flex align-items-baseline justify-content-between">
+                      <span class="fw-bold fs-6 text-dark" id="lmDetectorText">已安裝</span>
+                      <small class="fw-semibold" id="lmDetectorStatus">健全</small>
+                    </div>
+                    <div class="progress mt-1" style="height: 6px;">
+                      <div class="progress-bar" id="lmDetectorBar" role="progressbar" style="width: 100%;"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-6">
+                  <div class="p-2 bg-light rounded border h-100">
+                    <div class="text-muted small mb-1"><i class="bi bi-droplet-half"></i> 周邊消防栓距離</div>
+                    <div class="d-flex align-items-baseline justify-content-between">
+                      <span class="fw-bold fs-6 text-dark" id="lmHydrantText">25 m</span>
+                      <small class="fw-semibold" id="lmHydrantStatus">充足</small>
+                    </div>
+                    <div class="progress mt-1" style="height: 6px;">
+                      <div class="progress-bar bg-info" id="lmHydrantBar" role="progressbar" style="width: 80%;"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="col-12">
+                  <div class="px-2 py-1 bg-light rounded border small d-flex justify-content-between align-items-center">
+                    <span class="text-muted"><i class="bi bi-fire"></i> 滅火器配置：<b id="lmExtinguisherText" class="text-dark">充足</b></span>
+                    <span class="text-muted"><i class="bi bi-shield-check"></i> 資料來源：<span class="badge text-bg-secondary">taitung_buildings.csv</span></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 防災與消防具體改善建議 -->
+              <div class="advice-box p-3" id="lmAdviceBox">
+                <div class="fw-bold small mb-1 d-flex align-items-center gap-1" id="lmAdviceTitle">
+                  <i class="bi bi-shield-exclamation"></i> 防災與消防改善建議
+                </div>
+                <div class="small line-height-base" id="lmAdviceContent">
+                  建議內容載入中...
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 數據總表 -->
+    <div class="card panel-card mt-3" id="tableSection">
+      <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span class="fw-semibold"><i class="bi bi-table"></i> 鄉鎮市區數據總表 <span class="badge text-bg-light" id="tablePeriod"></span></span>
+        <button id="downloadBtn" class="btn btn-sm btn-outline-success"><i class="bi bi-download"></i> 匯出計算結果 CSV</button>
+      </div>
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-hover table-sm align-middle mb-0 data-table">
+            <thead class="table-light">
+              <tr>
+                <th>排名</th><th>鄉鎮市區</th><th class="text-end">住宅數</th><th class="text-end">平均屋齡</th>
+                <th class="text-end">30年以上</th><th class="text-end">磚木石造</th><th class="text-end">加強磚造</th>
+                <th class="text-end">RC/鋼構</th><th class="text-end">屋齡分數</th><th class="text-end">結構分數</th>
+                <th class="text-end">綜合指數</th><th class="text-center">等級</th>
+              </tr>
+            </thead>
+            <tbody id="dataTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="app-footer text-center py-3 small">
+    資料來源：財政部財政資訊中心「房屋稅籍住宅類數量依屋齡／構造區分」、內政部國土測繪中心鄉鎮市區界線 ｜ 115 大數據二 專題導論
+  </footer>
+
+  <!-- 研究方法 Modal -->
+  <div class="modal fade" id="methodModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title"><i class="bi bi-calculator"></i> 綜合火災風險指數計算方式</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="關閉"></button>
+        </div>
+        <div class="modal-body" id="methodBody"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 套件 (CDN) ===== -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+  <!-- 本地資料備援 (直接雙擊 index.html 時瀏覽器會阻擋 fetch，改用此備份) -->
+  <script src="data/csv_embedded.js"></script>
+  <script src="data/taitung_towns.js"></script>
+
+  <!-- 主程式 -->
+  <script src="js/app.js"></script>
+</body>
+</html>
+
